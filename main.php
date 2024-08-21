@@ -25,14 +25,11 @@ class MAIN_API
                 preg_match_all('/#\w+/', $post_content, $matches);
                 $hashtags = array_unique($matches[0]);
 
-
                 if (isset($_FILES['image']) && $_FILES['image']['error'] == UPLOAD_ERR_OK) {
                     $fileTmpPath = $_FILES['image']['tmp_name'];
                     $fileName = $_FILES['image']['name'];
-
                     $fileNameCmps = explode(".", $fileName);
                     $fileExtension = strtolower(end($fileNameCmps));
-
 
                     $allowedExtensions = ['jpg', 'jpeg', 'png', 'gif'];
                     if (in_array($fileExtension, $allowedExtensions)) {
@@ -50,7 +47,6 @@ class MAIN_API
                     }
                 }
 
-
                 $sql = "INSERT INTO `posts`(`userid`, `post_content`, `image`, `created_at`) 
                         VALUES (:userid, :post_content, :image, NOW())";
                 $stmt = $this->conn->prepare($sql);
@@ -61,23 +57,27 @@ class MAIN_API
                 if ($stmt->execute()) {
                     $post_id = $this->conn->lastInsertId();
 
-
                     foreach ($hashtags as $hashtag) {
                         $tag = substr($hashtag, 1);
 
-                        $checkSql = 'SELECT * FROM `hashtags` WHERE `hashtag` = :tag';
+                        $checkSql = 'SELECT `hashtag_id` FROM `hashtags` WHERE `hashtag` = :tag';
                         $checkStmt = $this->conn->prepare($checkSql);
                         $checkStmt->bindParam(':tag', $tag, PDO::PARAM_STR);
                         $checkStmt->execute();
 
                         if ($checkStmt->rowCount() == 0) {
+
                             $insertSql = 'INSERT INTO `hashtags` (`hashtag`) VALUES (:tag)';
                             $insertStmt = $this->conn->prepare($insertSql);
                             $insertStmt->bindParam(':tag', $tag, PDO::PARAM_STR);
                             $insertStmt->execute();
+
+                            $hashtagId = $this->conn->lastInsertId();
+                        } else {
+
+                            $hashtagId = $checkStmt->fetchColumn();
                         }
 
-                        $hashtagId = $this->conn->lastInsertId();
 
                         $postHashtagSql = 'INSERT INTO `post_hashtags` (`post_id`, `hashtag_id`) VALUES (:post_id, :hashtag_id)';
                         $postHashtagStmt = $this->conn->prepare($postHashtagSql);
@@ -92,13 +92,12 @@ class MAIN_API
                 }
             } catch (PDOException $e) {
                 error_log($e->getMessage());
-                return json_encode(array("error" => "Exception error occurred while creating post"));
+                return json_encode(array("error" => $e->getMessage()));
             }
         } else {
             return json_encode(array("error" => "Post Content Missing or User ID Missing"));
         }
     }
-
 
     public function getPosts($json)
     {
@@ -181,7 +180,7 @@ class MAIN_API
                 $post_id = $json['post_id'];
                 $reaction = $json['reaction'];
 
-                // Check if the user has already reacted to the post
+
                 $checkSql = 'SELECT * FROM `reacts` WHERE `user_id` = :userid AND `post_id` = :post_id';
                 $checkStmt = $this->conn->prepare($checkSql);
                 $checkStmt->bindParam(':userid', $userid, PDO::PARAM_INT);
@@ -189,11 +188,11 @@ class MAIN_API
                 $checkStmt->execute();
 
                 if ($checkStmt->rowCount() > 0) {
-                    // Reaction exists, update or delete it
+
                     $existingReaction = $checkStmt->fetch(PDO::FETCH_ASSOC);
 
                     if ($reaction === "") {
-                        // If reaction is empty, remove the existing reaction
+
                         $deleteSql = 'DELETE FROM `reacts` WHERE `user_id` = :userid AND `post_id` = :post_id';
                         $deleteStmt = $this->conn->prepare($deleteSql);
                         $deleteStmt->bindParam(':userid', $userid, PDO::PARAM_INT);
@@ -204,7 +203,7 @@ class MAIN_API
                             return json_encode(array("error" => "Failed to remove reaction"));
                         }
                     } else {
-                        // Update the existing reaction
+
                         $updateSql = 'UPDATE `reacts` SET `reaction` = :reaction, `reacted_at` = NOW() WHERE `user_id` = :userid AND `post_id` = :post_id';
                         $updateStmt = $this->conn->prepare($updateSql);
                         $updateStmt->bindParam(':reaction', $reaction, PDO::PARAM_STR);
@@ -217,7 +216,7 @@ class MAIN_API
                         }
                     }
                 } else {
-                    // Insert a new reaction
+
                     $insertSql = 'INSERT INTO `reacts` (`post_id`, `user_id`, `reaction`, `reacted_at`) VALUES (:post_id, :user_id, :reaction, NOW())';
                     $insertStmt = $this->conn->prepare($insertSql);
                     $insertStmt->bindParam(':post_id', $post_id, PDO::PARAM_INT);
@@ -238,7 +237,7 @@ class MAIN_API
         }
     }
 
-    public function getComments($json)
+    public function insertComment($json)
     {
 
         $json = json_decode($json, true);
@@ -251,14 +250,123 @@ class MAIN_API
             $sql = "INSERT INTO `comments`( `user_id`, `post_id`, `comment`, `commentd_at`) 
                     VALUES (:user_id, :post_id, :comment, NOW())";
 
-            $this->conn->prepare($sql);
-
-
+            $stmt = $this->conn->prepare($sql);
+            $stmt->bindParam(":user_id", $json["user_id"]);
+            $stmt->bindParam(":post_id", $json["post_id"]);
+            $stmt->bindParam(":comment", $json["comment"]);
+            if ($stmt->execute()) {
+                return json_encode(array("success" => "Comment Sent"));
+            } else {
+                return json_encode(array("error" => "Something went wrong while submitting your comment"));
+            }
 
         } catch (PDOException $e) {
             return json_encode(array("error" => $e->getMessage()));
         }
     }
+
+    public function getComment($json)
+    {
+        $json = json_decode($json, true);
+
+        try {
+            $sql = "SELECT comments.*,  users.username, users.user_image FROM `comments` INNER JOIN 
+                    users ON comments.user_id = users.userid WHERE `post_id` = :post_id ORDER BY comments.commentd_at DESC";
+            $stmt = $this->conn->prepare($sql);
+            $stmt->bindParam(":post_id", $json["post_id"]);
+            $stmt->execute();
+            $result = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            if ($result) {
+                return json_encode(array("success" => true, "comments" => $result));
+            } else {
+                return json_encode(array("success" => false, "comments" => []));
+            }
+        } catch (PDOException $e) {
+            return json_encode(array("error" => $e->getMessage()));
+        }
+    }
+
+    public function searchUser($json, )
+    {
+        $json = json_decode($json, true);
+
+        try {
+            $sql = "
+                SELECT users.*, 
+                       CASE 
+                           WHEN follows.userid IS NOT NULL THEN 1 
+                           ELSE 0 
+                       END AS is_following
+                FROM users
+                LEFT JOIN follows 
+                    ON users.userid = follows.followed_user_id 
+                    AND follows.userid = :currentUserId
+                WHERE users.username LIKE :username
+            ";
+            $stmt = $this->conn->prepare($sql);
+
+            $searchTerm = '%' . $json['username'] . '%';
+            $stmt->bindParam(':username', $searchTerm);
+            $stmt->bindParam(':currentUserId', $json["currentUserId"]);
+
+            $stmt->execute();
+            $result = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+
+            return json_encode(array("success" => $result));
+        } catch (PDOException $e) {
+            return json_encode(array("error" => $e->getMessage()));
+        }
+    }
+
+    public function followUser($json)
+    {
+        $json = json_decode($json, true);
+
+        try {
+            $sql = "INSERT INTO `follows`(`userid`, `followed_user_id`, `followed_at`)
+                     VALUES (:user_id, :followed_user_id, NOW())";
+            $stmt = $this->conn->prepare($sql);
+            $stmt->bindParam(":user_id", $json["user_id"]);
+            $stmt->bindParam(":followed_user_id", $json["followed_user_id"]);
+            if ($stmt->execute()) {
+                return json_encode(array("success" => "User Followed"));
+            } else {
+                return json_encode(array("error" => $stmt->errorInfo()));
+            }
+        } catch (PDOException $e) {
+            return json_encode(array("error" => $e->getMessage()));
+        }
+    }
+
+    public function unfollowUser($json)
+    {
+        $json = json_decode($json, true);
+
+        try {
+            $sql = "DELETE FROM `follows` 
+                WHERE `userid` = :user_id 
+                AND `followed_user_id` = :followed_user_id";
+            $stmt = $this->conn->prepare($sql);
+
+            $stmt->bindParam(":user_id", $json["user_id"]);
+            $stmt->bindParam(":followed_user_id", $json["followed_user_id"]);
+
+
+            if ($stmt->execute()) {
+                if ($stmt->rowCount() > 0) {
+                    return json_encode(array("success" => "User Unfollowed"));
+                } else {
+                    return json_encode(array("error" => "No follow relationship found to remove"));
+                }
+            } else {
+                return json_encode(array("error" => $stmt->errorInfo()));
+            }
+        } catch (PDOException $e) {
+            return json_encode(array("error" => $e->getMessage()));
+        }
+    }
+
 
 
 }
@@ -283,6 +391,25 @@ if ($_SERVER["REQUEST_METHOD"] == "GET" || $_SERVER["REQUEST_METHOD"] == "POST")
                 echo $main_api->reactToPost($json);
                 break;
 
+            case "insertComment":
+                echo $main_api->insertComment($json);
+                break;
+
+            case "getComment":
+                echo $main_api->getComment($json);
+                break;
+
+            case 'searchUser':
+                echo $main_api->searchUser($json);
+                break;
+
+            case 'followUser':
+                echo $main_api->followUser($json);
+                break;
+
+            case 'unfollowUser':
+                echo $main_api->unfollowUser($json);
+                break;
             default:
                 echo json_encode(["error" => "Invalid operation"]);
                 break;
