@@ -99,6 +99,24 @@ class MAIN_API
         }
     }
 
+    public function deletePost($json)
+    {
+        $json = json_decode($json, true);
+        try {
+            $sql = "DELETE FROM `posts` WHERE `post_id` = :post_id AND `userid` = :user_id";
+            $stmt = $this->conn->prepare($sql);
+            $stmt->bindParam(":post_id", $json["post_id"]);
+            $stmt->bindParam(":user_id", $json["user_id"]);
+            if ($stmt->execute()) {
+                return json_encode(array("success" => true));
+            } else {
+                return json_encode(array("error" => $stmt->errorInfo()));
+            }
+        } catch (PDOException $e) {
+            return json_encode(array("error" => $e->getMessage()));
+        }
+    }
+
     public function getPosts($json)
     {
         $json = json_decode($json, true);
@@ -410,6 +428,11 @@ if ($_SERVER["REQUEST_METHOD"] == "GET" || $_SERVER["REQUEST_METHOD"] == "POST")
             case 'unfollowUser':
                 echo $main_api->unfollowUser($json);
                 break;
+
+            case 'deletePost':
+                echo $main_api->deletePost($json);
+                break;
+
             default:
                 echo json_encode(["error" => "Invalid operation"]);
                 break;
